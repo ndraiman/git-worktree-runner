@@ -82,7 +82,7 @@ _git_gtr() {
       ;;
     clean)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--merged --yes -y --dry-run -n" -- "$cur"))
+        COMPREPLY=($(compgen -W "--merged --include-detached -d --force -f --yes -y --dry-run -n" -- "$cur"))
       fi
       ;;
     copy)

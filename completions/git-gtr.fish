@@ -99,6 +99,8 @@ complete -c git -n '__fish_git_gtr_using_command ai' -l ai -d 'AI tool to use' -
 
 # Clean command options
 complete -c git -n '__fish_git_gtr_using_command clean' -l merged -d 'Remove worktrees with merged PRs/MRs'
+complete -c git -n '__fish_git_gtr_using_command clean' -s d -l include-detached -d 'Also remove detached HEAD worktrees'
+complete -c git -n '__fish_git_gtr_using_command clean' -s f -l force -d 'Remove even with uncommitted changes'
 complete -c git -n '__fish_git_gtr_using_command clean' -l yes -d 'Skip confirmation prompts'
 complete -c git -n '__fish_git_gtr_using_command clean' -s y -d 'Skip confirmation prompts'
 complete -c git -n '__fish_git_gtr_using_command clean' -l dry-run -d 'Show what would be removed'

@@ -302,15 +302,19 @@ PRs/MRs have been merged. Auto-detects GitHub (gh) or GitLab (glab) from
 the remote URL.
 
 Options:
-  --merged            Also remove worktrees with merged PRs/MRs
-  --yes, -y           Skip confirmation prompts
-  --dry-run, -n       Show what would be removed without removing
+  --merged                Also remove worktrees with merged PRs/MRs
+  --include-detached, -d  Also remove detached HEAD worktrees (orphaned)
+  --force, -f             Remove even with uncommitted changes/untracked files
+  --yes, -y               Skip confirmation prompts
+  --dry-run, -n           Show what would be removed without removing
 
 Examples:
   git gtr clean                                 # Clean empty directories
   git gtr clean --merged                        # Also clean merged PRs
   git gtr clean --merged --dry-run              # Preview merged cleanup
   git gtr clean --merged --yes                  # Auto-confirm everything
+  git gtr clean --include-detached              # Also clean detached worktrees
+  git gtr clean --merged --force                # Force-remove merged worktrees
 EOF
 }
 
@@ -565,6 +569,8 @@ SETUP & MAINTENANCE:
          --merged: also remove worktrees with merged PRs/MRs
                    Auto-detects GitHub (gh) or GitLab (glab) from remote URL
                    Override: git gtr config set gtr.provider gitlab
+         --include-detached, -d: also remove detached HEAD worktrees (orphaned)
+         --force, -f: remove even with uncommitted changes/untracked files
          --yes, -y: skip confirmation prompts
          --dry-run, -n: show what would be removed without removing
 

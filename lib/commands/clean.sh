@@ -28,35 +28,109 @@ _clean_detect_provider() {
   return 1
 }
 
-# Check if a worktree should be skipped during merged cleanup.
+# Check if a worktree should be skipped during cleanup.
 # Returns 0 if should skip, 1 if should process.
-# Usage: _clean_should_skip <dir> <branch>
+# Usage: _clean_should_skip <dir> <branch> [force_mode]
 _clean_should_skip() {
-  local dir="$1" branch="$2"
+  local dir="$1" branch="$2" force="${3:-0}"
 
   if [ -z "$branch" ] || [ "$branch" = "(detached)" ]; then
     log_warn "Skipping $dir (detached HEAD)"
     return 0
   fi
 
-  if ! git -C "$dir" diff --quiet 2>/dev/null || \
-     ! git -C "$dir" diff --cached --quiet 2>/dev/null; then
-    log_warn "Skipping $branch (has uncommitted changes)"
-    return 0
-  fi
+  if [ "$force" -eq 0 ]; then
+    if ! git -C "$dir" diff --quiet 2>/dev/null || \
+       ! git -C "$dir" diff --cached --quiet 2>/dev/null; then
+      log_warn "Skipping $branch (has uncommitted changes, use --force)"
+      return 0
+    fi
 
-  if [ -n "$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)" ]; then
-    log_warn "Skipping $branch (has untracked files)"
-    return 0
+    if [ -n "$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)" ]; then
+      log_warn "Skipping $branch (has untracked files, use --force)"
+      return 0
+    fi
   fi
 
   return 1
 }
 
+# Remove detached HEAD worktrees (orphaned after branch deletion)
+# Usage: _clean_detached repo_root base_dir prefix yes_mode dry_run force_mode
+_clean_detached() {
+  local repo_root="$1" base_dir="$2" prefix="$3" yes_mode="$4" dry_run="$5" force_mode="$6"
+
+  log_step "Checking for detached HEAD worktrees..."
+
+  local removed=0 skipped=0
+
+  for dir in "$base_dir/${prefix}"*; do
+    [ -d "$dir" ] || continue
+
+    local branch
+    branch=$(current_branch "$dir") || true
+
+    # Only process detached HEAD worktrees
+    if [ -n "$branch" ] && [ "$branch" != "(detached)" ]; then
+      continue
+    fi
+
+    # Check for uncommitted changes unless --force
+    if [ "$force_mode" -eq 0 ]; then
+      if ! git -C "$dir" diff --quiet 2>/dev/null || \
+         ! git -C "$dir" diff --cached --quiet 2>/dev/null; then
+        log_warn "Skipping $dir (detached HEAD with uncommitted changes, use --force)"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      if [ -n "$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null)" ]; then
+        log_warn "Skipping $dir (detached HEAD with untracked files, use --force)"
+        skipped=$((skipped + 1))
+        continue
+      fi
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "[dry-run] Would remove: $dir (detached HEAD)"
+      removed=$((removed + 1))
+    elif [ "$yes_mode" -eq 1 ] || prompt_yes_no "Remove detached worktree '$(basename "$dir")'?"; then
+      log_step "Removing detached worktree: $(basename "$dir")"
+      local remove_output
+      if remove_output=$(git worktree remove "$dir" --force 2>&1); then
+        log_info "Removed: $(basename "$dir")"
+        removed=$((removed + 1))
+      elif [[ "$remove_output" == *"is not a working tree"* ]]; then
+        # Orphaned directory - worktree metadata already pruned, just rm
+        if rm -rf "$dir" 2>/dev/null; then
+          log_info "Removed orphaned directory: $(basename "$dir")"
+          removed=$((removed + 1))
+        else
+          log_error "Failed to remove orphaned directory: $dir"
+          skipped=$((skipped + 1))
+        fi
+      else
+        log_error "Failed to remove: $dir"
+        [ -n "$remove_output" ] && log_error "$remove_output"
+        skipped=$((skipped + 1))
+      fi
+    else
+      log_warn "Skipped: $(basename "$dir") (user declined)"
+      skipped=$((skipped + 1))
+    fi
+  done
+
+  echo ""
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "Dry run complete. Would remove: $removed, Skipped: $skipped"
+  else
+    log_info "Detached cleanup complete. Removed: $removed, Skipped: $skipped"
+  fi
+}
+
 # Remove worktrees whose PRs/MRs are merged (handles squash merges)
-# Usage: _clean_merged repo_root base_dir prefix yes_mode dry_run
+# Usage: _clean_merged repo_root base_dir prefix yes_mode dry_run force_mode
 _clean_merged() {
-  local repo_root="$1" base_dir="$2" prefix="$3" yes_mode="$4" dry_run="$5"
+  local repo_root="$1" base_dir="$2" prefix="$3" yes_mode="$4" dry_run="$5" force_mode="$6"
 
   log_step "Checking for worktrees with merged PRs/MRs..."
 
@@ -80,7 +154,7 @@ _clean_merged() {
     # Skip main repo branch silently (not counted)
     [ "$branch" = "$main_branch" ] && continue
 
-    if _clean_should_skip "$dir" "$branch"; then
+    if _clean_should_skip "$dir" "$branch" "$force_mode"; then
       skipped=$((skipped + 1))
       continue
     fi
@@ -102,7 +176,7 @@ _clean_merged() {
           continue
         fi
 
-        if remove_worktree "$dir" 0; then
+        if remove_worktree "$dir" "$force_mode"; then
           git branch -d "$branch" 2>/dev/null || git branch -D "$branch" 2>/dev/null || true
           removed=$((removed + 1))
 
@@ -132,11 +206,15 @@ _clean_merged() {
 cmd_clean() {
   local _spec
   _spec="--merged
+--include-detached|-d
+--force|-f
 --yes|-y
 --dry-run|-n"
   parse_args "$_spec" "$@"
 
   local merged_mode="${_arg_merged:-0}"
+  local include_detached="${_arg_include_detached:-0}"
+  local force_mode="${_arg_force:-0}"
   local yes_mode="${_arg_yes:-0}"
   local dry_run="${_arg_dry_run:-0}"
 
@@ -180,8 +258,13 @@ EOF
     log_info "Cleanup complete (no empty directories found)"
   fi
 
+  # --include-detached mode: remove detached HEAD worktrees (orphaned)
+  if [ "$include_detached" -eq 1 ]; then
+    _clean_detached "$repo_root" "$base_dir" "$prefix" "$yes_mode" "$dry_run" "$force_mode"
+  fi
+
   # --merged mode: remove worktrees with merged PRs/MRs (handles squash merges)
   if [ "$merged_mode" -eq 1 ]; then
-    _clean_merged "$repo_root" "$base_dir" "$prefix" "$yes_mode" "$dry_run"
+    _clean_merged "$repo_root" "$base_dir" "$prefix" "$yes_mode" "$dry_run" "$force_mode"
   fi
 }
